@@ -1,0 +1,30 @@
+{
+    "name": "mailai/platform",
+    "description": "Multi-tenant, AI-agent-driven email deliverability platform",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-sodium": "*",
+        "ext-curl": "*",
+        "phpmailer/phpmailer": "^6.9",
+        "vlucas/phpdotenv": "^5.6",
+        "firebase/php-jwt": "^6.10",
+        "ramsey/uuid": "^4.7",
+        "geoip2/geoip2": "^3.1"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "MailAI\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MailAI\\Tests\\": "tests/"
+        }
+    }
+}
