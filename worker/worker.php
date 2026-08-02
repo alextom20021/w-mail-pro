@@ -34,6 +34,8 @@ use MailAI\Sending\MailDispatcher;
 use MailAI\Sending\OutboxRepository;
 use MailAI\Sending\SendingConnectionRepository;
 use MailAI\Security\EncryptionService;
+use MailAI\Tracking\LinkRewriter;
+use MailAI\Tracking\TrackingTokenService;
 
 // --- Bootstrap -------------------------------------------------------
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
@@ -112,6 +114,19 @@ function processJob(
 
     $credentials = $connectionRepo->getDecryptedCredentials((int) $best['id']);
     $best['credentials'] = $credentials;
+
+    // Rewrite links + inject the open pixel BEFORE the mandatory compliance
+    // footer is appended by MailDispatcher, so tracking never touches the
+    // unsubscribe link itself (LinkRewriter explicitly skips it).
+    $tokens = new TrackingTokenService($_ENV['APP_ENCRYPTION_KEY'] ?? '');
+    $linkRewriter = new LinkRewriter($tokens, rtrim($_ENV['APP_URL'] ?? 'https://app.example.com', '/'));
+    $job['html_body'] = $linkRewriter->rewrite(
+        $job['html_body'],
+        (int) $job['client_id'],
+        (int) $job['contact_id'],
+        (int) ($job['campaign_id'] ?? 0),
+        (int) $job['id']
+    );
 
     $unsubscribeUrl = buildUnsubscribeUrl((int) $job['client_id'], (int) $job['contact_id']);
     $result = $dispatcher->send($best, $job, $unsubscribeUrl);
