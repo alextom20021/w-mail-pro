@@ -44,7 +44,7 @@ final class ConnectionRotator
         return $scored[0];
     }
 
-    private function score(array $conn, ?string $isp, ?array ispStat): float
+    private function score(array $conn, ?string $isp, ?array $ispStat): float
     {
         $reputation = (float) $conn['reputation_score']; // 0-100
 

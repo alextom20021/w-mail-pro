@@ -27,7 +27,8 @@ use MailAI\Core\Database;
 use MailAI\Security\EncryptionService;
 use MailAI\Sending\OutboxRepository;
 use MailAI\Sending\SendingConnectionRepository;
-use PDO;
+// Note: no `use PDO;` needed — this file is in the global namespace, so
+// PDO (also a global-namespace class) resolves without an import.
 
 $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
 $dotenv->safeLoad();

@@ -105,7 +105,7 @@ final class AnomalyDetector
         ];
     }
 
-    private function windowStats(int $connectionId, int days): array
+    private function windowStats(int $connectionId, int $days): array
     {
         $stmt = $this->db->prepare(
             "SELECT
