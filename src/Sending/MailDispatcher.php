@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace MailAI\Sending;
 
+use MailAI\Sending\Api\ApiSenderInterface;
+use MailAI\Sending\Api\MailgunClient;
+use MailAI\Sending\Api\PostmarkClient;
+use MailAI\Sending\Api\SendGridClient;
+use MailAI\Sending\Api\SesClient;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception as PHPMailerException;
 use RuntimeException;
@@ -62,6 +67,18 @@ final class MailDispatcher
             $mail->addCustomHeader('List-Unsubscribe', "<{$unsubscribeUrl}>");
             $mail->addCustomHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
 
+            // DKIM: prefer PHPMailer's built-in signer for SMTP sends (it's
+            // battle-tested against real MTA quirks) over the hand-rolled
+            // DkimSigner, which exists for raw-MIME/API-send paths where
+            // PHPMailer isn't in the loop. Only signs if the connection's
+            // domain has DKIM configured (see DomainRepository).
+            if (!empty($connection['dkim'])) {
+                $mail->DKIM_domain = $connection['dkim']['domain'];
+                $mail->DKIM_selector = $connection['dkim']['selector'];
+                $mail->DKIM_private_string = $connection['dkim']['private_key_pem'];
+                $mail->DKIM_identity = $mail->From;
+            }
+
             $mail->send();
 
             return ['success' => true, 'transcript' => $transcript, 'error' => null, 'is_hard_failure' => false];
@@ -74,15 +91,31 @@ final class MailDispatcher
 
     private function sendViaApi(array $connection, array $job, string $unsubscribeUrl): array
     {
-        // NOTE (Phase 1 scope): API-provider clients (SendGrid/Mailgun/SES/Postmark)
-        // are stubbed here — each needs its own thin HTTP client mirroring the
-        // AIProviderInterface pattern (one class per vendor, unified return shape).
-        // Wiring this up is Phase 2's connection-manager milestone; SMTP is fully
-        // functional now so the worker/rotation/compliance pipeline can be tested
-        // end-to-end without waiting on all four vendor integrations.
-        throw new RuntimeException(
-            "API connection type '{$connection['type']}' is not yet implemented — Phase 2. Use an SMTP connection for now."
-        );
+        $client = $this->apiClientFor($connection['type']);
+        $creds = $connection['credentials'];
+
+        $message = [
+            'to' => $job['to_email'],
+            'subject' => $job['subject'],
+            'html' => $this->appendComplianceFooter($job['html_body'], $unsubscribeUrl),
+            'from_email' => $creds['from_email'] ?? '',
+            'from_name' => $creds['from_name'] ?? '',
+            'unsubscribe_url' => $unsubscribeUrl,
+            'headers' => [],
+        ];
+
+        return $client->send($creds, $message);
+    }
+
+    private function apiClientFor(string $type): ApiSenderInterface
+    {
+        return match ($type) {
+            'sendgrid' => new SendGridClient(),
+            'mailgun' => new MailgunClient(),
+            'ses' => new SesClient(),
+            'postmark' => new PostmarkClient(),
+            default => throw new RuntimeException("Unknown API connection type: {$type}"),
+        };
     }
 
     private function appendComplianceFooter(string $html, string $unsubscribeUrl): string
