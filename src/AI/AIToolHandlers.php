@@ -95,6 +95,41 @@ final class AIToolHandlers
                 return self::createTemplate($args['name'], $args['subject'], $args['html_body']);
             }
         );
+
+        $registry->register(
+            'score_content_spam_risk',
+            'Run heuristic spam-risk analysis on a subject/body pair before sending. Returns a 0-100 risk ' .
+            'score, risk level, and specific issues found. This is a heuristic estimate, not a guarantee — ' .
+            'say so plainly if reporting the score to a client.',
+            [
+                'type' => 'object',
+                'properties' => [
+                    'subject' => ['type' => 'string'],
+                    'html_body' => ['type' => 'string'],
+                ],
+                'required' => ['subject', 'html_body'],
+            ],
+            function (array $args): array {
+                return (new ContentScorer())->score($args['subject'], $args['html_body']);
+            }
+        );
+
+        $registry->register(
+            'clean_contact_list',
+            'Scan a contact list for risky addresses (role accounts, disposable domains, invalid syntax, ' .
+            'prior hard bounces) and flag/suppress them. Invalid-syntax and previously-hard-bounced addresses ' .
+            'are suppressed automatically; role accounts and other soft signals are only flagged for review.',
+            [
+                'type' => 'object',
+                'properties' => [
+                    'list_id' => ['type' => 'integer'],
+                ],
+                'required' => ['list_id'],
+            ],
+            function (array $args): array {
+                return (new ListCleaner(Database::connection()))->cleanCurrentClientList((int) $args['list_id']);
+            }
+        );
     }
 
     private static function recordWarmupHistory(int $connectionId, int $newLimit, string $reason): void
