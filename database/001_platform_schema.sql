@@ -46,51 +46,85 @@ CREATE TABLE IF NOT EXISTS client_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------
--- 2. ADD client_id TO EXISTING TABLES
+-- 2. BASELINE TABLES + client_id SCOPING
+--
+-- This migration was originally written to layer multi-tenancy onto an
+-- ALREADY-EXISTING legacy install (domains, email_templates, campaigns,
+-- email_logs). On a brand-new database — like this one — those tables
+-- don't exist yet, so we CREATE TABLE IF NOT EXISTS a minimal baseline
+-- first (matching the columns src/ actually reads/writes — see
+-- DomainRepository, CampaignRepository, worker.php::logEmailEvent), then
+-- ADD COLUMN the tenant/AI columns on top. Plain ADD COLUMN/ADD INDEX
+-- (no IF NOT EXISTS) is deliberate: MySQL 8.4 rejects IF NOT EXISTS on
+-- ADD INDEX, and since the tables above are freshly created in this same
+-- migration run, the columns can't already exist — idempotency isn't
+-- needed here. `ip_pool` was dropped: grep across src/ and worker/ found
+-- zero live references to it; ConnectionRotator.php uses
+-- `sending_connections` instead, so ip_pool was dead legacy naming.
 -- ---------------------------------------------------------------------
-ALTER TABLE domains
-    ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL AFTER id,
-    ADD COLUMN IF NOT EXISTS dkim_selector VARCHAR(64) NULL,
-    ADD COLUMN IF NOT EXISTS dkim_private_key_encrypted TEXT NULL,
-    ADD COLUMN IF NOT EXISTS dkim_public_key TEXT NULL,
-    ADD COLUMN IF NOT EXISTS spf_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
-    ADD COLUMN IF NOT EXISTS dkim_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
-    ADD COLUMN IF NOT EXISTS dmarc_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
-    ADD COLUMN IF NOT EXISTS dns_verification_status ENUM('pending','verified','failed') NOT NULL DEFAULT 'pending',
-    ADD COLUMN IF NOT EXISTS dns_last_checked_at DATETIME NULL,
-    ADD INDEX IF NOT EXISTS idx_domains_client (client_id);
+CREATE TABLE IF NOT EXISTS domains (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    domain      VARCHAR(190) NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE ip_pool
-    ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL AFTER id,
-    ADD COLUMN IF NOT EXISTS reputation_score DECIMAL(5,2) NOT NULL DEFAULT 100.00,
-    ADD COLUMN IF NOT EXISTS warmup_stage TINYINT UNSIGNED NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS is_quarantined TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS quarantined_at DATETIME NULL,
-    ADD COLUMN IF NOT EXISTS quarantine_reason VARCHAR(255) NULL,
-    ADD INDEX IF NOT EXISTS idx_ip_pool_client (client_id);
+CREATE TABLE IF NOT EXISTS email_templates (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(190) NOT NULL,
+    subject     VARCHAR(255) NOT NULL,
+    html_body   MEDIUMTEXT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name         VARCHAR(190) NOT NULL,
+    template_id  INT UNSIGNED NULL,
+    list_id      INT UNSIGNED NULL,
+    status       VARCHAR(32) NOT NULL DEFAULT 'draft',
+    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS email_logs (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    campaign_id INT UNSIGNED NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE domains
+    ADD COLUMN client_id INT UNSIGNED NULL AFTER id,
+    ADD COLUMN dkim_selector VARCHAR(64) NULL,
+    ADD COLUMN dkim_private_key_encrypted TEXT NULL,
+    ADD COLUMN dkim_public_key TEXT NULL,
+    ADD COLUMN spf_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
+    ADD COLUMN dkim_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
+    ADD COLUMN dmarc_status ENUM('unknown','pass','fail') NOT NULL DEFAULT 'unknown',
+    ADD COLUMN dns_verification_status ENUM('pending','verified','failed') NOT NULL DEFAULT 'pending',
+    ADD COLUMN dns_last_checked_at DATETIME NULL,
+    ADD INDEX idx_domains_client (client_id);
 
 ALTER TABLE email_templates
-    ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL AFTER id,
-    ADD COLUMN IF NOT EXISTS ai_generated TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS spam_score DECIMAL(5,2) NULL,
-    ADD COLUMN IF NOT EXISTS spam_score_notes JSON NULL,
-    ADD INDEX IF NOT EXISTS idx_templates_client (client_id);
+    ADD COLUMN client_id INT UNSIGNED NULL AFTER id,
+    ADD COLUMN ai_generated TINYINT(1) NOT NULL DEFAULT 0,
+    ADD COLUMN spam_score DECIMAL(5,2) NULL,
+    ADD COLUMN spam_score_notes JSON NULL,
+    ADD INDEX idx_templates_client (client_id);
 
 ALTER TABLE campaigns
-    ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL AFTER id,
-    ADD COLUMN IF NOT EXISTS ai_managed TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'AI agent may adjust this campaign autonomously',
-    ADD COLUMN IF NOT EXISTS ab_test_enabled TINYINT(1) NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS ab_winner_variant_id INT UNSIGNED NULL,
-    ADD COLUMN IF NOT EXISTS send_time_optimized TINYINT(1) NOT NULL DEFAULT 0,
-    ADD INDEX IF NOT EXISTS idx_campaigns_client (client_id);
+    ADD COLUMN client_id INT UNSIGNED NULL AFTER id,
+    ADD COLUMN ai_managed TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'AI agent may adjust this campaign autonomously',
+    ADD COLUMN ab_test_enabled TINYINT(1) NOT NULL DEFAULT 0,
+    ADD COLUMN ab_winner_variant_id INT UNSIGNED NULL,
+    ADD COLUMN send_time_optimized TINYINT(1) NOT NULL DEFAULT 0,
+    ADD INDEX idx_campaigns_client (client_id);
 
 ALTER TABLE email_logs
-    ADD COLUMN IF NOT EXISTS client_id INT UNSIGNED NULL AFTER id,
-    ADD COLUMN IF NOT EXISTS connection_id INT UNSIGNED NULL,
-    ADD COLUMN IF NOT EXISTS isp VARCHAR(64) NULL,
-    ADD COLUMN IF NOT EXISTS recipient_country CHAR(2) NULL,
-    ADD INDEX IF NOT EXISTS idx_email_logs_client (client_id),
-    ADD INDEX IF NOT EXISTS idx_email_logs_isp (isp);
+    ADD COLUMN client_id INT UNSIGNED NULL AFTER id,
+    ADD COLUMN connection_id INT UNSIGNED NULL,
+    ADD COLUMN isp VARCHAR(64) NULL,
+    ADD COLUMN recipient_country CHAR(2) NULL,
+    ADD INDEX idx_email_logs_client (client_id),
+    ADD INDEX idx_email_logs_isp (isp);
 
 -- ---------------------------------------------------------------------
 -- 3. CONTACT LISTS & CONTACTS
