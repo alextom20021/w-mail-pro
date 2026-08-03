@@ -31,10 +31,36 @@ $totalDelivered = array_sum(array_column($isp, 'delivered'));
 $totalComplained = array_sum(array_column($isp, 'complained'));
 $avgInboxRate = $totalSent > 0 ? round($totalDelivered / $totalSent * 100, 1) : 0;
 
+// AI activity feed (spec 2.1): this client's own agent actions, newest first.
+$aiFeed = $db->prepare(
+    "SELECT tool_name, status, created_at FROM ai_audit_log
+     WHERE client_id = :client_id ORDER BY id DESC LIMIT 8"
+);
+$aiFeed->execute(['client_id' => ClientContext::clientId()]);
+$aiFeed = $aiFeed->fetchAll();
+
+// Upcoming warm-up milestones (spec 2.1): next scheduled ramp targets.
+$milestones = $db->prepare(
+    "SELECT w.connection_id, w.target_volume, w.applies_on, s.label
+     FROM warmup_schedules w
+     JOIN sending_connections s ON s.id = w.connection_id
+     WHERE w.client_id = :client_id AND w.applies_on >= CURDATE()
+     ORDER BY w.applies_on ASC LIMIT 5"
+);
+$milestones->execute(['client_id' => ClientContext::clientId()]);
+$milestones = $milestones->fetchAll();
+
 $pageTitle = 'Overview';
 $activeNav = 'overview';
 include __DIR__ . '/partials/layout_head.php';
 ?>
+
+<div class="d-flex gap-2 mb-4 flex-wrap">
+    <a href="/dashboard/campaigns.php" class="btn btn-primary btn-sm"><i class="bi bi-send me-1"></i> New Campaign</a>
+    <a href="/dashboard/lists.php" class="btn btn-outline-primary btn-sm"><i class="bi bi-upload me-1"></i> Import List</a>
+    <a href="/dashboard/connections.php" class="btn btn-outline-primary btn-sm"><i class="bi bi-hdd-network me-1"></i> Add Connection</a>
+    <a href="#" class="btn btn-outline-secondary btn-sm" data-bs-toggle="offcanvas" data-bs-target="#aiAssistant"><i class="bi bi-robot me-1"></i> Ask the AI to do it for you</a>
+</div>
 
 <div class="row g-3 mb-4">
     <div class="col-6 col-xl-3">
@@ -95,6 +121,47 @@ include __DIR__ . '/partials/layout_head.php';
     detector quarantines connections automatically above threshold, but review is always worthwhile.
 </div>
 <?php endif; ?>
+
+<div class="row g-3 mb-4">
+    <div class="col-lg-7">
+        <div class="card table-card h-100">
+            <div class="card-header bg-white border-0"><h6 class="mb-0 fw-semibold"><i class="bi bi-robot text-primary me-1"></i> AI Activity Feed</h6></div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    <?php foreach ($aiFeed as $a): ?>
+                        <tr>
+                            <td class="text-nowrap text-muted small"><?= htmlspecialchars($a['created_at']) ?></td>
+                            <td><code class="small"><?= htmlspecialchars($a['tool_name']) ?></code></td>
+                            <td><span class="badge bg-<?= in_array($a['status'], ['executed', 'approved'], true) ? 'success' : ($a['status'] === 'rejected' || $a['status'] === 'failed' ? 'danger' : 'warning') ?>-subtle text-dark"><?= htmlspecialchars($a['status']) ?></span></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($aiFeed)): ?><tr><td class="text-muted text-center py-3">No AI actions yet — open the assistant (bottom-right) and ask it to set something up.</td></tr><?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card table-card h-100">
+            <div class="card-header bg-white border-0"><h6 class="mb-0 fw-semibold"><i class="bi bi-thermometer-half text-warning me-1"></i> Upcoming Warm-up Milestones</h6></div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    <?php foreach ($milestones as $m): ?>
+                        <tr>
+                            <td class="small"><?= htmlspecialchars($m['label']) ?></td>
+                            <td class="small text-muted"><?= htmlspecialchars($m['applies_on']) ?></td>
+                            <td class="small fw-medium"><?= number_format((int) $m['target_volume']) ?>/day</td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($milestones)): ?><tr><td class="text-muted text-center py-3 small">No upcoming ramp steps — warm-up milestones appear here once a warming connection is active.</td></tr><?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
 new Chart(document.getElementById('seriesChart'), {
