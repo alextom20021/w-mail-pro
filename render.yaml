@@ -1,0 +1,93 @@
+# Render Blueprint — deploy with "New +" → "Blueprint" and point at this repo.
+#
+# IMPORTANT: Render does not offer a native managed MySQL database (only
+# PostgreSQL and Redis are first-party). This blueprint provisions the web,
+# worker, and cron services, but you must supply your own MySQL instance
+# and set DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS to it — options that
+# work well with Render: PlanetScale (MySQL-compatible, generous free
+# tier), Railway MySQL, or a DigitalOcean/AWS RDS managed MySQL. Run the
+# database/*.sql migrations against it once before first deploy — Render
+# services don't auto-run docker-entrypoint-initdb.d the way the local
+# docker-compose mysql service does.
+#
+# Redis (used for future queue upgrade + rate limiting headroom) IS
+# natively available on Render — the redis service below provisions it.
+
+services:
+  - type: web
+    name: mailai-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PORT
+        value: 80
+      - key: APP_URL
+        sync: false
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+      - key: REDIS_HOST
+        fromService:
+          type: redis
+          name: mailai-redis
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          type: redis
+          name: mailai-redis
+          property: port
+
+  - type: worker
+    name: mailai-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "while true; do php worker/worker.php 50; sleep 5; done"
+    envVars:
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+
+  - type: worker
+    name: mailai-ai-cycle
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "while true; do php worker/ai_cycle.php; sleep 60; done"
+    envVars:
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: 3306
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+
+  - type: redis
+    name: mailai-redis
+    plan: free
+    ipAllowList: []

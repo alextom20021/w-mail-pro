@@ -17,6 +17,10 @@ RUN composer install --no-dev --no-interaction --no-scripts --prefer-dist || tru
 COPY . .
 RUN composer install --no-dev --no-interaction --prefer-dist
 
+# Render (and most PaaS hosts) inject a PORT env var and expect the
+# process to bind to it rather than a fixed port — default to 80 for
+# plain `docker run` / docker-compose use where PORT isn't set.
+ENV PORT=80
 EXPOSE 80
 
-CMD ["php", "-S", "0.0.0.0:80", "-t", "public"]
+CMD ["sh", "-c", "php -S 0.0.0.0:${PORT} -t public"]

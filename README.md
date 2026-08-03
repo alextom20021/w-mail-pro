@@ -121,6 +121,32 @@ crontab):
 (`docker-compose.yml`'s `worker`/`cron` services already loop these every
 5s/60s respectively — the crontab lines above are for a non-Docker deploy.)
 
+## Deploying to Render
+
+`render.yaml` provisions the web service, two worker services (outbox
+processor + AI cycle), and Redis via Render's Blueprint feature ("New +" →
+"Blueprint", point at this repo). Two things to know before deploying:
+
+1. **Render has no native managed MySQL** — only PostgreSQL and Redis are
+   first-party. You need an external MySQL host (PlanetScale, Railway
+   MySQL, or a managed MySQL from DigitalOcean/AWS RDS all work) and must
+   set `DB_HOST`/`DB_USER`/`DB_PASS`/etc. as env vars on each Render
+   service (marked `sync: false` in `render.yaml` — Render prompts you
+   for these values in the dashboard rather than storing them in the
+   blueprint file).
+2. **Run the migrations manually once** against that external database
+   before first deploy — `database/001_platform_schema.sql`, then `002`,
+   then `003`, in that order. Render services don't auto-run
+   `docker-entrypoint-initdb.d` the way local `docker compose`'s `mysql`
+   service does.
+
+The build failure you'd hit without `render.yaml`/the root `Dockerfile`
+("open Dockerfile: no such file or directory") is because Render's Docker
+build step looks for `Dockerfile` at the repo root by default — this repo
+originally only had one at `docker/php.Dockerfile` (for `docker compose`,
+which supports arbitrary paths). Both now point at the same root
+`Dockerfile` so there's one source of truth.
+
 ## Architecture notes worth knowing before extending this
 
 - **Tenant isolation is structural, not convention.** Don't bypass
