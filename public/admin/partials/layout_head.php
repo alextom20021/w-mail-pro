@@ -21,7 +21,8 @@ $activeNav = $activeNav ?? '';
 <body>
 <nav id="sidebar">
     <div class="brand"><i class="bi bi-shield-lock-fill text-primary"></i> Super Admin</div>
-    <a href="/admin/index.php" class="nav-link <?= $activeNav === 'clients' ? 'active' : '' ?>">Clients</a>
+    <a href="/admin/index.php" class="nav-link <?= $activeNav === 'clients' ? 'active' : '' ?>">Global Health</a>
+    <a href="/admin/clients.php" class="nav-link <?= $activeNav === 'manage_clients' ? 'active' : '' ?>">Manage Clients</a>
     <a href="/admin/audit_log.php" class="nav-link <?= $activeNav === 'audit' ? 'active' : '' ?>">AI Audit Log</a>
     <a href="/admin/logout.php" class="nav-link">Logout</a>
 </nav>

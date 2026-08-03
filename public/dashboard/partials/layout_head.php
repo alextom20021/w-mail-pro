@@ -35,6 +35,12 @@ $activeNav = $activeNav ?? '';
     </style>
 </head>
 <body>
+<?php if (\MailAI\Core\SessionAuth::isImpersonating()): ?>
+<div class="alert alert-warning rounded-0 mb-0 py-2 text-center small" style="position:sticky; top:0; z-index:2000;">
+    <i class="bi bi-eye-fill"></i> A super admin (<?= htmlspecialchars(\MailAI\Core\SessionAuth::impersonatingAdminEmail()) ?>) is viewing this account as you.
+    <a href="/admin/stop_impersonate.php" class="fw-bold ms-2">Return to Admin</a>
+</div>
+<?php endif; ?>
 <nav id="sidebar">
     <div class="brand"><i class="bi bi-envelope-check-fill"></i><span>MailAI</span></div>
     <div class="flex-grow-1 overflow-auto py-2">

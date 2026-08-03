@@ -10,7 +10,8 @@ exists.
 ### Built and functional
 - **Database schema** (`database/001_platform_schema.sql`,
   `002_api_rate_limiting.sql`, `003_auth_and_admin.sql`,
-  `004_platform_extensions.sql`) — full multi-tenant
+  `004_platform_extensions.sql`, `005_domains_dns_columns.sql`,
+  `006_admin_client_management.sql`) — full multi-tenant
   schema: clients, contact lists/contacts, sending_connections (unified
   SMTP+API pool), outbox queue, suppressions/bounces/complaints, ISP-level
   analytics tables, warm-up schedules, AI audit log, API rate-limit buckets,
@@ -126,12 +127,40 @@ exists.
   action belongs to the logged-in client before executing it — the
   previous build logged pending approvals but had no UI path to actually
   approve one.
+- **Super Admin client management (spec 1.2)** —
+  `public/admin/clients.php` (search/filter/bulk suspend-activate/create)
+  and `public/admin/client_detail.php` (plan + quota editing, force
+  logout, force password reset, internal notes, a merged
+  campaigns/AI-actions/admin-actions activity timeline, soft-delete with
+  a restore path, and permanent purge gated on typing the client's email
+  to confirm). `src/Core/ClientAdminRepository.php` is deliberately NOT a
+  `TenantRepository` — it's the one place in the codebase allowed to
+  query across every client, and every method on it should only ever be
+  called from a `SessionAuth::requireSuperAdmin()`-gated page.
+  `src/Core/AdminAuditLogger.php` + the `admin_audit_log` table record
+  every one of these actions (who, what, which client, when) — this is
+  spec 1.7's "platform-wide audit log", distinct from `ai_audit_log`
+  which records the AI agent's own tool calls, not human admin actions.
+- **Impersonation** — `SessionAuth::startImpersonation()` lets a super
+  admin log in as a client (audited) to see exactly what they see; the
+  client dashboard chrome shows an unmissable "a super admin is viewing
+  this account as you" banner with a one-click "Return to Admin" link
+  (`public/admin/stop_impersonate.php`) for the whole time it's active.
+- **Force logout now actually forces logout** — `clients.session_version`
+  is bumped by "Force logout", client suspend, soft-delete, and forced
+  password reset; `SessionAuth::requireClient()` re-checks
+  status/deleted_at/session_version against the DB on *every* request
+  (not just at login), so these actions kick an already-open browser
+  session immediately instead of only blocking the next login attempt.
 
 ### Explicitly stubbed / not yet built
 - **Two-factor authentication**, ticket system, GDPR self-service export
-  tooling, plan/billing/quota enforcement UI, and most of the
-  super-admin suite beyond what's listed above (client CRUD/impersonate,
-  global health dashboard, bulk actions, revenue overview) — large,
+  tooling, plan/billing/quota *enforcement* UI (quotas are stored and
+  editable per client, but nothing yet throttles a client who exceeds
+  `quota_daily_sends`/`quota_contacts`/`quota_connections`), and the rest
+  of the super-admin suite (AI engine control panel, infra oversight
+  dashboards beyond connection/domain lists, revenue/usage overview,
+  platform settings UI, queue worker restart controls) — large,
   separately-scoped pieces of the full spec not yet built.
 - `email_logs` / `campaigns` schema assumptions — several repos assume
   columns on these two tables; see the `ASSUMPTION NOTE` in
