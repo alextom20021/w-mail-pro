@@ -67,11 +67,50 @@ try {
         }
 
         // Strip -- line comments, then split on statement-terminating
-        // semicolons. None of these migrations use stored
-        // procedures/triggers with an alternate DELIMITER, so a plain
-        // split is safe here.
+        // semicolons — but NOT semicolons that appear inside a quoted
+        // string (e.g. a COMMENT '...' containing a semicolon), which a
+        // naive explode(';', ...) would incorrectly split on. None of
+        // these migrations use stored procedures/triggers with an
+        // alternate DELIMITER, so a quote-aware split covers every case
+        // here.
         $sql = preg_replace('/^--.*$/m', '', $sql);
-        $statements = array_filter(array_map('trim', explode(';', $sql)));
+        $statements = [];
+        $current = '';
+        $inString = null; // null, "'", or '"'
+        $len = strlen($sql);
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $sql[$i];
+            if ($inString !== null) {
+                $current .= $ch;
+                if ($ch === '\\') {
+                    // consume the escaped character verbatim so an
+                    // escaped quote doesn't end the string early
+                    if ($i + 1 < $len) {
+                        $current .= $sql[++$i];
+                    }
+                    continue;
+                }
+                if ($ch === $inString) {
+                    $inString = null;
+                }
+                continue;
+            }
+            if ($ch === "'" || $ch === '"') {
+                $inString = $ch;
+                $current .= $ch;
+                continue;
+            }
+            if ($ch === ';') {
+                $statements[] = trim($current);
+                $current = '';
+                continue;
+            }
+            $current .= $ch;
+        }
+        if (trim($current) !== '') {
+            $statements[] = trim($current);
+        }
+        $statements = array_filter($statements, static fn($s) => $s !== '');
 
         $count = 0;
         foreach ($statements as $stmt) {
