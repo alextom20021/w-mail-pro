@@ -82,6 +82,7 @@ ClientContext::setClient($clientId);
 $encryption = new EncryptionService($_ENV['APP_ENCRYPTION_KEY']);
 $registry = new AIToolRegistry();
 AIToolHandlers::registerAll($registry, new SendingConnectionRepository($encryption));
+\MailAI\AI\AIPlatformTools::registerAll($registry, $encryption);
 
 $provider = AIProviderFactory::fromDatabase($encryption);
 $agent = new AIAgent($provider, $registry, $logger);

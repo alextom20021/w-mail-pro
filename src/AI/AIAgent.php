@@ -40,6 +40,12 @@ final class AIAgent
         'delete_contact_list',
         'disable_connection',
         'send_campaign_now',
+        // Each of these commits or destroys real send volume, exactly like
+        // send_campaign_now — deferred sending is still sending, and a
+        // cancelled queue can't be un-cancelled:
+        'schedule_campaign',
+        'cancel_campaign',
+        'send_ab_test_campaign',
     ];
 
     private const MAX_TOOL_LOOP_ITERATIONS = 6;

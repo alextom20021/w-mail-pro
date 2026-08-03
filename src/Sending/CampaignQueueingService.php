@@ -30,8 +30,14 @@ final class CampaignQueueingService
     {
     }
 
-    /** @return int Number of contacts enqueued. */
-    public function enqueue(int $campaignId, string $subject, string $htmlBody, int $listId): int
+    /**
+     * @param string|null $scheduledAt 'Y-m-d H:i:s' to schedule for a future
+     *        time (the worker only picks rows with scheduled_at <= NOW(), so
+     *        a future timestamp simply sits queued until then); null = send
+     *        as soon as workers pick it up.
+     * @return int Number of contacts enqueued.
+     */
+    public function enqueue(int $campaignId, string $subject, string $htmlBody, int $listId, ?string $scheduledAt = null): int
     {
         $clientId = ClientContext::clientId();
         $contactRepo = new ContactRepository();
@@ -51,7 +57,7 @@ final class CampaignQueueingService
                 break;
             }
 
-            $this->insertBatch($clientId, $campaignId, $subject, $htmlBody, $contacts);
+            $this->insertBatch($clientId, $campaignId, $subject, $htmlBody, $contacts, null, $scheduledAt);
             $enqueued += count($contacts);
             $offset += self::BATCH_SIZE;
         }
@@ -152,14 +158,19 @@ final class CampaignQueueingService
         return $enqueued;
     }
 
-    private function insertBatch(int $clientId, int $campaignId, string $subject, string $htmlBody, array $contacts, ?int $variantId = null): void
+    private function insertBatch(int $clientId, int $campaignId, string $subject, string $htmlBody, array $contacts, ?int $variantId = null, ?string $scheduledAt = null): void
     {
         $placeholders = [];
         $values = [];
 
+        $scheduleExpr = $scheduledAt === null ? 'NOW()' : '?';
+
         foreach ($contacts as $contact) {
-            $placeholders[] = '(?, ?, ?, ?, ?, ?, ?, NOW(), \'queued\')';
+            $placeholders[] = "(?, ?, ?, ?, ?, ?, ?, $scheduleExpr, 'queued')";
             array_push($values, $clientId, $campaignId, $variantId, $contact['id'], $contact['email'], $subject, $htmlBody);
+            if ($scheduledAt !== null) {
+                $values[] = $scheduledAt;
+            }
         }
 
         $sql = 'INSERT INTO outbox (client_id, campaign_id, variant_id, contact_id, to_email, subject, html_body, scheduled_at, status) VALUES '

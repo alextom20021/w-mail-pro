@@ -11,7 +11,7 @@ exists.
 - **Database schema** (`database/001_platform_schema.sql`,
   `002_api_rate_limiting.sql`, `003_auth_and_admin.sql`,
   `004_platform_extensions.sql`, `005_domains_dns_columns.sql`,
-  `006_admin_client_management.sql`) — full multi-tenant
+  `006_admin_client_management.sql`, `007_campaign_lifecycle.sql`) — full multi-tenant
   schema: clients, contact lists/contacts, sending_connections (unified
   SMTP+API pool), outbox queue, suppressions/bounces/complaints, ISP-level
   analytics tables, warm-up schedules, AI audit log, API rate-limit buckets,
@@ -127,6 +127,40 @@ exists.
   action belongs to the logged-in client before executing it — the
   previous build logged pending approvals but had no UI path to actually
   approve one.
+- **The AI agent manages the ENTIRE platform for the client** (the spec's
+  MAIN GOAL: "client co-works with agent with prompts, agent asks for
+  details, client confirms, agent works") — `src/AI/AIPlatformTools.php`
+  adds the second half of the tool surface on top of `AIToolHandlers`,
+  bringing the agent to **40 tools** covering every dashboard capability:
+  account overview + onboarding-gap detection (`get_account_overview`),
+  templates (list/get/update, plus create + spam-score from phase 1),
+  contact lists (create, `add_contacts` bulk import with per-address
+  invalid/duplicate/suppressed reporting, `get_list_contacts` inspection),
+  suppression hygiene (`suppress_email`, `list_suppressions` — there is
+  deliberately NO unsuppress tool, since undoing an unsubscribe is a
+  compliance decision a human must make from the dashboard), full
+  campaign lifecycle (`list_campaigns`, `get_campaign_progress`,
+  `schedule_campaign` for future sends, `pause_campaign` /
+  `resume_campaign` mid-send, `cancel_campaign`,
+  `send_ab_test_campaign` which creates variants + traffic-splits +
+  auto-winner-selects), connection lifecycle (`resume_connection`,
+  `get_warmup_history`, plus add/disable/quarantine/warm-up from
+  phase 1), real analytics (`get_analytics`: isp/country/connection/
+  timeseries/failures), and webhooks (list/create/pause). The
+  destructive list grew to match: `schedule_campaign`,
+  `cancel_campaign`, and `send_ab_test_campaign` joined
+  `send_campaign_now`/`disable_connection`/`delete_contact_list` in
+  `AIAgent::DESTRUCTIVE_TOOLS` — anything that commits or destroys real
+  send volume always pauses for the client's Approve click regardless
+  of autonomy level. Campaign pause/resume works with **zero worker
+  changes**: `007_campaign_lifecycle.sql` adds a `paused` state to the
+  outbox enum, and since the worker only ever claims
+  `status='queued' AND scheduled_at <= NOW()`, paused rows (and
+  future-scheduled rows, which is how `schedule_campaign` works) are
+  naturally skipped. The chat system prompt was rewritten to match: the
+  agent introduces itself as the operator of the account, looks up real
+  state before acting, drives onboarding proactively for new clients,
+  and never reports numbers a tool didn't return.
 - **Super Admin client management (spec 1.2)** —
   `public/admin/clients.php` (search/filter/bulk suspend-activate/create)
   and `public/admin/client_detail.php` (plan + quota editing, force
