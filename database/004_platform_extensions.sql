@@ -117,6 +117,6 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 -- has 001-003 applied and none of these 3 columns yet.
 -- ---------------------------------------------------------------------
 ALTER TABLE domains
-    ADD COLUMN dns_provider VARCHAR(32) NULL COMMENT 'e.g. cloudflare; NULL = manual DNS',
+    ADD COLUMN dns_provider VARCHAR(32) NULL COMMENT 'e.g. cloudflare, NULL = manual DNS',
     ADD COLUMN dns_provider_zone_id VARCHAR(64) NULL,
     ADD COLUMN dns_provider_token_encrypted TEXT NULL;
