@@ -128,17 +128,27 @@ processor + AI cycle), and Redis via Render's Blueprint feature ("New +" →
 "Blueprint", point at this repo). Two things to know before deploying:
 
 1. **Render has no native managed MySQL** — only PostgreSQL and Redis are
-   first-party. You need an external MySQL host (PlanetScale, Railway
-   MySQL, or a managed MySQL from DigitalOcean/AWS RDS all work) and must
-   set `DB_HOST`/`DB_USER`/`DB_PASS`/etc. as env vars on each Render
-   service (marked `sync: false` in `render.yaml` — Render prompts you
-   for these values in the dashboard rather than storing them in the
-   blueprint file).
-2. **Run the migrations manually once** against that external database
-   before first deploy — `database/001_platform_schema.sql`, then `002`,
-   then `003`, in that order. Render services don't auto-run
-   `docker-entrypoint-initdb.d` the way local `docker compose`'s `mysql`
-   service does.
+   first-party. This deployment uses **Aiven's free-tier MySQL** (1 CPU /
+   1 GB RAM / 1 GB storage, powers off on inactivity — fine for a
+   pre-launch/demo instance, not for production load). Set
+   `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASS`/`DB_NAME` as env vars on the
+   Render service. Aiven (and most managed MySQL) enforce TLS — also set
+   `DB_SSL_CA` to the path of `database/aiven-ca.pem` (already committed;
+   it's a public CA cert, not a secret) so `Database::connection()` opts
+   into an encrypted connection. Also set `APP_ENCRYPTION_KEY` (generate
+   with the command in "Setup" below) and `APP_URL`.
+2. **Run the migrations once** against that database —
+   `database/001_platform_schema.sql`, then `002`, then `003`, in that
+   order. This Render plan has no shell access, so there's no `psql`/`mysql`
+   CLI to run them by hand from the dashboard. `public/migrate.php` exists
+   for exactly this: a token-gated one-time endpoint (guarded by a
+   `MIGRATE_TOKEN` env var you set only for the duration of the migration,
+   then delete) that runs all three files and, with `&seed=1&password=...`,
+   creates a first `clients` row and `super_admins` row so there's
+   something to log in with. **Delete `MIGRATE_TOKEN` from the Render env
+   right after running it** — without that var set, every request to
+   `migrate.php` 403s, which is the safe default state for it to sit in
+   long-term.
 
 The build failure you'd hit without `render.yaml`/the root `Dockerfile`
 ("open Dockerfile: no such file or directory") is because Render's Docker
@@ -146,6 +156,22 @@ build step looks for `Dockerfile` at the repo root by default — this repo
 originally only had one at `docker/php.Dockerfile` (for `docker compose`,
 which supports arbitrary paths). Both now point at the same root
 `Dockerfile` so there's one source of truth.
+
+### A note on `database/001_platform_schema.sql`'s baseline tables
+
+This migration was originally written assuming `domains`, `email_templates`,
+`campaigns`, and `email_logs` already existed from a pre-existing legacy
+install, and only added `client_id`/AI columns via `ALTER TABLE`. On a
+genuinely fresh database that assumption doesn't hold, so the migration now
+also `CREATE TABLE IF NOT EXISTS`s minimal baseline versions of those four
+tables first (columns matched to what `src/` actually reads/writes). The
+`ALTER TABLE` clauses were also changed from `ADD COLUMN IF NOT EXISTS` /
+`ADD INDEX IF NOT EXISTS` to plain `ADD COLUMN` / `ADD INDEX` — MySQL 8.4
+(confirmed against live Aiven) rejects the former with a 1064 syntax error
+regardless of table state. `ip_pool` was dropped entirely: a full grep
+across `src/` and `worker/` found zero live references to it —
+`ConnectionRotator.php` uses `sending_connections` instead, so `ip_pool`
+was dead legacy naming that never got cleaned up.
 
 ## Architecture notes worth knowing before extending this
 
