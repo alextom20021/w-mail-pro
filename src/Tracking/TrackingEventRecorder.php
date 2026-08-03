@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace MailAI\Tracking;
 
+use MailAI\AI\SendTimeOptimizer;
 use MailAI\Sending\ConnectionRotator;
+use MailAI\Webhooks\WebhookDispatcher;
 use PDO;
 
 /**
@@ -23,18 +25,42 @@ final class TrackingEventRecorder
     {
     }
 
-    public function recordOpen(int $clientId, int $contactId, int $campaignId, ?string $ip, ?string $country): void
+    public function recordOpen(int $clientId, int $contactId, int $campaignId, ?string $ip, ?string $country, ?int $outboxId = null): void
     {
         $isp = $this->ispForContact($clientId, $contactId);
         $this->upsertStat($clientId, $campaignId, $isp, $country, 'opened');
         $this->bumpEngagement($clientId, $contactId, 1.0);
+        $this->bumpVariantStat($clientId, $outboxId, 'opened_count');
+        (new WebhookDispatcher($this->db))->dispatch($clientId, 'open', [
+            'campaign_id' => $campaignId, 'contact_id' => $contactId, 'country' => $country,
+        ]);
     }
 
-    public function recordClick(int $clientId, int $contactId, int $campaignId, ?string $ip, ?string $country): void
+    public function recordClick(int $clientId, int $contactId, int $campaignId, ?string $ip, ?string $country, ?int $outboxId = null): void
     {
         $isp = $this->ispForContact($clientId, $contactId);
         $this->upsertStat($clientId, $campaignId, $isp, $country, 'clicked');
         $this->bumpEngagement($clientId, $contactId, 2.5); // clicks weigh more than opens
+        $this->bumpVariantStat($clientId, $outboxId, 'clicked_count');
+        (new WebhookDispatcher($this->db))->dispatch($clientId, 'click', [
+            'campaign_id' => $campaignId, 'contact_id' => $contactId, 'country' => $country,
+        ]);
+    }
+
+    /** A/B testing: attribute this open/click back to the variant that was actually sent, via the outbox row. */
+    private function bumpVariantStat(int $clientId, ?int $outboxId, string $column): void
+    {
+        if ($outboxId === null || $outboxId === 0) {
+            return;
+        }
+
+        $stmt = $this->db->prepare(
+            "UPDATE campaign_variants cv
+             JOIN outbox o ON o.variant_id = cv.id
+             SET cv.{$column} = cv.{$column} + 1
+             WHERE o.id = :outbox_id AND o.client_id = :client_id AND cv.client_id = :client_id2"
+        );
+        $stmt->execute(['outbox_id' => $outboxId, 'client_id' => $clientId, 'client_id2' => $clientId]);
     }
 
     private function ispForContact(int $clientId, int $contactId): string
@@ -69,16 +95,15 @@ final class TrackingEventRecorder
         $stmt = $this->db->prepare(
             "UPDATE contacts
              SET engagement_score = LEAST(100, engagement_score + :weight),
-                 last_engaged_at = NOW(),
-                 best_send_hour_local = HOUR(NOW())
+                 last_engaged_at = NOW()
              WHERE id = :id AND client_id = :client_id"
         );
-        // NOTE: best_send_hour_local is naively overwritten with the current
-        // hour on every engagement here. A real send-time optimizer should
-        // maintain a rolling histogram of engagement-by-hour and pick the
-        // mode, not just the latest — this is a Phase 1 placeholder wired
-        // into the real column so downstream code has something to read
-        // (see AI/ContentScorer.php roadmap note for the fuller version).
         $stmt->execute(['weight' => $weight, 'id' => $contactId, 'client_id' => $clientId]);
+
+        // Real send-time optimization: bump this hour's bucket in the
+        // contact's engagement histogram and recompute best_send_hour_local
+        // as the mode across all buckets, not just "whatever hour it is
+        // right now" (the old Phase 1 placeholder this replaced).
+        (new SendTimeOptimizer($this->db))->recordEngagementHour($clientId, $contactId);
     }
 }

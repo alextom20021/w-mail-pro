@@ -38,8 +38,23 @@ services:
       - mysql
     env_file: .env
     # Runs the AI meta-optimization loop (warm-up scheduler, anomaly
-    # detector) once a minute, per the spec's "updated every minute" requirement.
+    # detector, A/B test winner selection) once a minute, per the spec's
+    # "updated every minute" requirement.
     command: ["sh", "-c", "while true; do php worker/ai_cycle.php; sleep 60; done"]
+
+  webhook_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      - mysql
+    env_file: .env
+    # Drains queued webhook_deliveries and POSTs them to client endpoints
+    # with retry/backoff — separate from `cron` since a burst of webhook
+    # retries shouldn't compete with the per-minute AI cycle's cadence.
+    command: ["sh", "-c", "while true; do php worker/webhook_worker.php; sleep 15; done"]
 
   mysql:
     image: mysql:8.0

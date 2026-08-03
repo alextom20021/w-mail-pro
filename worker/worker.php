@@ -135,13 +135,42 @@ function processJob(
         $outbox->markSent((int) $job['id'], $result['transcript']);
         $connectionRepo->incrementSentToday((int) $best['id']);
         logEmailEvent($db, $job, $best, $isp, 'sent');
+        bumpVariantSentCount($db, $job);
+        dispatchWebhookEvent($db, (int) $job['client_id'], 'send', [
+            'campaign_id' => $job['campaign_id'] ?? null,
+            'contact_id' => $job['contact_id'],
+            'to_email' => $job['to_email'],
+            'connection_id' => $best['id'],
+        ]);
     } else {
         $outbox->markFailed((int) $job['id'], $result['error'] ?? 'Unknown send error', $result['is_hard_failure']);
         if ($result['is_hard_failure']) {
             recordBounce($db, $job, $best, 'hard', $result['error'] ?? '');
+            dispatchWebhookEvent($db, (int) $job['client_id'], 'bounce', [
+                'campaign_id' => $job['campaign_id'] ?? null,
+                'contact_id' => $job['contact_id'],
+                'to_email' => $job['to_email'],
+                'diagnostic' => $result['error'] ?? '',
+            ]);
         }
         logEmailEvent($db, $job, $best, $isp, $result['is_hard_failure'] ? 'hard_bounced' : 'soft_bounced');
     }
+}
+
+/** A/B testing: tally how many sends each variant actually got, for winner selection. */
+function bumpVariantSentCount(\PDO $db, array $job): void
+{
+    if (empty($job['variant_id'])) {
+        return;
+    }
+
+    $db->prepare('UPDATE campaign_variants SET sent_count = sent_count + 1 WHERE id = :id AND client_id = :client_id')
+        ->execute(['id' => $job['variant_id'], 'client_id' => $job['client_id']]);
+}
+
+function dispatchWebhookEvent(\PDO $db, int $clientId, string $eventType, array $payload): void
+{
+    (new \MailAI\Webhooks\WebhookDispatcher($db))->dispatch($clientId, $eventType, $payload);
 }
 
 function buildUnsubscribeUrl(int $clientId, int $contactId): string

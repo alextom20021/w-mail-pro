@@ -31,6 +31,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($_POST['action'] ?? '') === 'verify' && !empty($_POST['domain_id'])) {
         $lastVerification = $repo->verify((int) $_POST['domain_id']);
     }
+
+    if (($_POST['action'] ?? '') === 'link_cloudflare' && !empty($_POST['domain_id'])) {
+        try {
+            $repo->linkCloudflare((int) $_POST['domain_id'], trim($_POST['cf_token'] ?? ''), trim($_POST['cf_zone_id'] ?? ''));
+            $flash = 'Cloudflare linked. Use "Auto-apply DNS records" to publish SPF/DKIM/DMARC directly.';
+        } catch (\RuntimeException $e) {
+            $flash = null;
+            $cfError = $e->getMessage();
+        }
+    }
+
+    if (($_POST['action'] ?? '') === 'unlink_cloudflare' && !empty($_POST['domain_id'])) {
+        $repo->unlinkDnsProvider((int) $_POST['domain_id']);
+        $flash = 'Cloudflare unlinked — DNS records revert to manual copy/paste.';
+    }
+
+    if (($_POST['action'] ?? '') === 'auto_apply_dns' && !empty($_POST['domain_id'])) {
+        try {
+            $repo->autoApplyDnsRecords((int) $_POST['domain_id']);
+            $flash = 'DNS records published via Cloudflare. Click "Re-check DNS" in a minute or two once propagation catches up.';
+        } catch (\RuntimeException $e) {
+            $cfError = $e->getMessage();
+        }
+    }
 }
 
 $domains = $repo->findAllWhere();
@@ -41,6 +65,7 @@ include __DIR__ . '/partials/layout_head.php';
 ?>
 
 <?php if ($flash): ?><div class="alert alert-success"><?= htmlspecialchars($flash) ?></div><?php endif; ?>
+<?php if (!empty($cfError)): ?><div class="alert alert-danger"><?= htmlspecialchars($cfError) ?></div><?php endif; ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <p class="text-muted mb-0">Each domain gets its own DKIM key pair automatically. SPF/DKIM/DMARC are checked live against DNS.</p>
@@ -74,6 +99,34 @@ include __DIR__ . '/partials/layout_head.php';
                     <?php foreach ($repo->requiredDnsRecords((int) $d['id']) as $type => $rec): ?>
                         <div class="small mb-1"><strong class="text-uppercase"><?= $type ?></strong> — Host: <code><?= htmlspecialchars($rec['host']) ?></code> — Value: <code><?= htmlspecialchars($rec['value']) ?></code></div>
                     <?php endforeach; ?>
+                    <hr class="my-2">
+                    <?php if (!empty($d['dns_provider'])): ?>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-info-subtle text-info"><i class="bi bi-cloud-check"></i> Cloudflare linked</span>
+                            <form method="post" class="d-inline">
+                                <?= Csrf::field() ?>
+                                <input type="hidden" name="action" value="auto_apply_dns">
+                                <input type="hidden" name="domain_id" value="<?= (int) $d['id'] ?>">
+                                <button class="btn btn-sm btn-primary" type="submit">Auto-apply DNS records</button>
+                            </form>
+                            <form method="post" class="d-inline">
+                                <?= Csrf::field() ?>
+                                <input type="hidden" name="action" value="unlink_cloudflare">
+                                <input type="hidden" name="domain_id" value="<?= (int) $d['id'] ?>">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit">Unlink</button>
+                            </form>
+                        </div>
+                    <?php else: ?>
+                        <form method="post" class="row g-2 align-items-end">
+                            <?= Csrf::field() ?>
+                            <input type="hidden" name="action" value="link_cloudflare">
+                            <input type="hidden" name="domain_id" value="<?= (int) $d['id'] ?>">
+                            <div class="col-auto"><label class="form-label small mb-0">Cloudflare API Token</label><input type="password" name="cf_token" class="form-control form-control-sm" placeholder="Zone:DNS:Edit scoped token"></div>
+                            <div class="col-auto"><label class="form-label small mb-0">Zone ID</label><input name="cf_zone_id" class="form-control form-control-sm" placeholder="Zone ID"></div>
+                            <div class="col-auto"><button class="btn btn-sm btn-outline-primary" type="submit">Link Cloudflare</button></div>
+                        </form>
+                        <div class="form-text">Optional — lets the platform publish these records for you instead of copy/paste.</div>
+                    <?php endif; ?>
                 </td></tr>
             <?php endforeach; ?>
             <?php if (empty($domains)): ?><tr><td colspan="6" class="text-center text-muted py-4">No domains yet.</td></tr><?php endif; ?>

@@ -26,10 +26,20 @@ $activeNav = 'analytics';
 include __DIR__ . '/partials/layout_head.php';
 ?>
 
-<form method="get" class="mb-3">
+<form method="get" class="mb-3 d-flex align-items-center gap-2">
     <select name="days" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
         <?php foreach ([7, 30, 90] as $d): ?><option value="<?= $d ?>" <?= $days === $d ? 'selected' : '' ?>>Last <?= $d ?> days</option><?php endforeach; ?>
     </select>
+    <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown"><i class="bi bi-download"></i> Export</button>
+        <ul class="dropdown-menu">
+            <?php foreach (['isp' => 'By ISP', 'country' => 'By Country', 'connection' => 'By Connection', 'failures' => 'Failure Reasons'] as $type => $label): ?>
+                <li><h6 class="dropdown-header"><?= $label ?></h6></li>
+                <li><a class="dropdown-item" href="/dashboard/analytics_export.php?type=<?= $type ?>&format=csv&days=<?= $days ?>">CSV</a></li>
+                <li><a class="dropdown-item" href="/dashboard/analytics_export.php?type=<?= $type ?>&format=pdf&days=<?= $days ?>">PDF</a></li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
 </form>
 
 <div class="row g-3 mb-4">

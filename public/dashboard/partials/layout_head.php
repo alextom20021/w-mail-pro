@@ -11,6 +11,7 @@ $activeNav = $activeNav ?? '';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="<?= htmlspecialchars(\MailAI\Core\Csrf::token()) ?>">
     <title><?= htmlspecialchars($pageTitle ?? 'MailAI') ?> — MailAI</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
@@ -44,6 +45,7 @@ $activeNav = $activeNav ?? '';
         <a href="/dashboard/campaigns.php" class="nav-link <?= $activeNav === 'campaigns' ? 'active' : '' ?>"><i class="bi bi-send"></i> Campaigns</a>
         <a href="/dashboard/analytics.php" class="nav-link <?= $activeNav === 'analytics' ? 'active' : '' ?>"><i class="bi bi-bar-chart-line"></i> Analytics</a>
         <a href="/dashboard/onboarding.php" class="nav-link <?= $activeNav === 'onboarding' ? 'active' : '' ?>"><i class="bi bi-flag"></i> Onboarding</a>
+        <a href="/dashboard/webhooks.php" class="nav-link <?= $activeNav === 'webhooks' ? 'active' : '' ?>"><i class="bi bi-plug"></i> Webhooks</a>
         <a href="/dashboard/logout.php" class="nav-link"><i class="bi bi-box-arrow-right"></i> Logout</a>
     </div>
 </nav>

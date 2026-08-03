@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace MailAI\Core;
 
+use MailAI\Security\CloudflareDnsService;
 use MailAI\Security\DkimSigner;
 use MailAI\Security\DomainVerificationService;
 use MailAI\Security\EncryptionService;
+use RuntimeException;
 
 final class DomainRepository extends TenantRepository
 {
@@ -73,6 +75,60 @@ final class DomainRepository extends TenantRepository
             'selector' => $domain['dkim_selector'],
             'private_key_pem' => $this->encryption->decrypt($domain['dkim_private_key_encrypted']),
         ];
+    }
+
+    /** Links a Cloudflare zone + API token to this domain so records can be auto-applied. Token is verified before saving. */
+    public function linkCloudflare(int $domainId, string $apiToken, string $zoneId): void
+    {
+        $domain = $this->find($domainId);
+        if ($domain === null) {
+            throw new RuntimeException("Domain {$domainId} not found for this client.");
+        }
+
+        $cf = new CloudflareDnsService($apiToken, $zoneId);
+        if (!$cf->verifyAccess()) {
+            throw new RuntimeException('Cloudflare token/zone could not be verified — check the token has Zone:DNS:Edit permission for this zone.');
+        }
+
+        $this->update($domainId, [
+            'dns_provider' => 'cloudflare',
+            'dns_provider_zone_id' => $zoneId,
+            'dns_provider_token_encrypted' => $this->encryption->encrypt($apiToken),
+        ]);
+    }
+
+    public function unlinkDnsProvider(int $domainId): void
+    {
+        $this->update($domainId, [
+            'dns_provider' => null,
+            'dns_provider_zone_id' => null,
+            'dns_provider_token_encrypted' => null,
+        ]);
+    }
+
+    /** Publishes the SPF/DKIM/DMARC records via the linked provider instead of just displaying them. */
+    public function autoApplyDnsRecords(int $domainId): array
+    {
+        $domain = $this->find($domainId);
+        if ($domain === null) {
+            throw new RuntimeException("Domain {$domainId} not found for this client.");
+        }
+        if (empty($domain['dns_provider']) || empty($domain['dns_provider_token_encrypted'])) {
+            throw new RuntimeException('No DNS provider linked for this domain — link Cloudflare first.');
+        }
+
+        $records = $this->requiredDnsRecords($domainId);
+        $token = $this->encryption->decrypt($domain['dns_provider_token_encrypted']);
+
+        $cf = new CloudflareDnsService($token, $domain['dns_provider_zone_id']);
+
+        return $cf->applyRecommendedRecords(
+            $domain['domain'],
+            $domain['dkim_selector'],
+            $records['dkim']['value'],
+            $records['spf']['value'],
+            $records['dmarc']['value']
+        );
     }
 
     /** The exact DNS records a client needs to publish, for the onboarding wizard UI. */

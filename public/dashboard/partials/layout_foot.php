@@ -58,9 +58,15 @@ document.getElementById('aiChatForm')?.addEventListener('submit', async (e) => {
             log.insertAdjacentHTML('beforeend', `<div class="mb-3"><div class="bg-light rounded-3 p-3"><strong>AI:</strong> ${escapeHtml(payload.data.reply)}</div></div>`);
 
             const pending = document.getElementById('aiPendingApprovals');
-            pending.innerHTML = '';
             (payload.data.pending_approvals || []).forEach(a => {
-                pending.insertAdjacentHTML('beforeend', `<div class="alert alert-warning py-2 px-3 small mb-2">Pending approval: <strong>${a.tool}</strong> — <code>${escapeHtml(JSON.stringify(a.arguments))}</code></div>`);
+                pending.insertAdjacentHTML('beforeend', `
+                    <div class="alert alert-warning py-2 px-3 small mb-2" id="approval-${a.audit_id}">
+                        Pending approval: <strong>${escapeHtml(a.tool)}</strong> — <code>${escapeHtml(JSON.stringify(a.arguments))}</code>
+                        <div class="mt-2 d-flex gap-2">
+                            <button class="btn btn-sm btn-success" onclick="mailaiRespondApproval(${a.audit_id}, 'approve')">Approve</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="mailaiRespondApproval(${a.audit_id}, 'reject')">Reject</button>
+                        </div>
+                    </div>`);
             });
         } else {
             log.insertAdjacentHTML('beforeend', `<div class="mb-3 text-danger small">Error: ${escapeHtml(payload.error || 'unknown error')}</div>`);
@@ -75,6 +81,27 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+async function mailaiRespondApproval(auditId, action) {
+    const el = document.getElementById(`approval-${auditId}`);
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    try {
+        const res = await fetch('/dashboard/ai_approve.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audit_id: auditId, action, csrf_token: csrfToken }),
+        });
+        const payload = await res.json();
+        if (el) {
+            el.className = payload.error ? 'alert alert-danger py-2 px-3 small mb-2' : 'alert alert-secondary py-2 px-3 small mb-2';
+            el.innerHTML = payload.error
+                ? `Error: ${escapeHtml(payload.error)}`
+                : (action === 'approve' ? `Approved and executed: <code>${escapeHtml(JSON.stringify(payload.output || {}))}</code>` : 'Rejected.');
+        }
+    } catch (err) {
+        if (el) el.innerHTML = 'Request failed.';
+    }
 }
 </script>
 </body>

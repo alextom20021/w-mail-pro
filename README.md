@@ -9,7 +9,8 @@ exists.
 
 ### Built and functional
 - **Database schema** (`database/001_platform_schema.sql`,
-  `002_api_rate_limiting.sql`, `003_auth_and_admin.sql`) — full multi-tenant
+  `002_api_rate_limiting.sql`, `003_auth_and_admin.sql`,
+  `004_platform_extensions.sql`) — full multi-tenant
   schema: clients, contact lists/contacts, sending_connections (unified
   SMTP+API pool), outbox queue, suppressions/bounces/complaints, ISP-level
   analytics tables, warm-up schedules, AI audit log, API rate-limit buckets,
@@ -27,9 +28,11 @@ exists.
   Anthropic implementations, `FailoverProvider` for redundancy), a tool
   registry (`adjust_warmup`, `quarantine_connection`,
   `get_deliverability_summary`, `create_email_template`,
-  `score_content_spam_risk`, `clean_contact_list`), and an
-  `ai_autonomy_level` gate (`off` / `suggest_only` / `approve_required` /
-  `full_auto`) — every tool call logged to `ai_audit_log` regardless of
+  `score_content_spam_risk`, `clean_contact_list`, plus the setup/
+  provisioning tools listed under Phase 2 below —
+  `add_sending_connection`, `add_domain`, `create_campaign`, etc.), and
+  an `ai_autonomy_level` gate (`off` / `suggest_only` / `approve_required`
+  / `full_auto`) — every tool call logged to `ai_audit_log` regardless of
   whether it executed or was queued for approval. `WarmupScheduler` and
   `AnomalyDetector` are rules-engine (fast, run every minute via
   `worker/ai_cycle.php`); `ContentScorer` and `ListCleaner` are heuristic
@@ -66,30 +69,78 @@ exists.
   activate/suspend, global 24h health, full AI audit log viewer.
 - **Docker Compose** — web/worker/cron/mysql/redis services.
 
+### Built and functional (Phase 2 additions)
+- **Self-serve signup** (`public/dashboard/signup.php`,
+  `src/Core/ClientRegistrationService.php`) — replaces the old
+  insert-a-row-by-hand flow; creates a client and logs them straight into
+  the onboarding wizard.
+- **Real send-time optimization** (`src/AI/SendTimeOptimizer.php`,
+  `contact_engagement_hours` table) — a rolling per-contact histogram of
+  which hour opens/clicks land in; `contacts.best_send_hour_local` is the
+  mode of that histogram, recomputed on every engagement event, not just
+  overwritten with "whatever hour it is right now".
+- **A/B testing auto-pilot** (`src/AI/ABTestingService.php`,
+  `src/Sending/CampaignQueueingService::enqueueAbTest()`,
+  `campaign_variants` table) — splits a campaign across variants by
+  traffic percentage at queue time; once every variant has fully sent
+  with enough combined sample size, `ai_cycle.php`'s per-minute run picks
+  a winner by open rate (click rate fallback) automatically. Sends the
+  full split up front rather than a small-test-then-rollout-winner
+  design — see that class's docblock for the tradeoff.
+- **Click-link allowlisting** (`src/Tracking/ClickAllowlist.php`,
+  `campaign_links` table) — every link a campaign's content actually
+  contains is registered once at queue time; `public/track/click.php`
+  now rejects any redirect target that isn't in that set, closing the
+  open-redirect gap that used to be documented there.
+- **Webhook event streaming** (`src/Webhooks/`, `webhooks` /
+  `webhook_deliveries` tables, `worker/webhook_worker.php`) — clients
+  manage subscriptions from `public/dashboard/webhooks.php`; send/open/
+  click/bounce events are queued by `WebhookDispatcher` (never delivered
+  inline — a slow customer endpoint must not block sending/tracking) and
+  POSTed with an HMAC-SHA256 signature by the dedicated worker, 5 retries
+  with exponential backoff.
+- **CSV/PDF analytics export** (`src/Export/`,
+  `public/dashboard/analytics_export.php`) — PDF via a small hand-rolled
+  writer (`SimplePdfWriter`), not a third-party library: this sandbox has
+  no outbound network access to verify a new Composer dependency
+  actually builds on Render, and this project already hit exactly that
+  failure mode once with `firebase/php-jwt`. Raw PDF syntax has nothing
+  to fail to install.
+- **Cloudflare DNS automation** (`src/Security/CloudflareDnsService.php`,
+  wired into `public/dashboard/domains.php`) — optional per-domain: a
+  client can link a scoped Cloudflare API token + zone ID (verified
+  before saving, encrypted at rest) and click "Auto-apply DNS records"
+  instead of copy/pasting SPF/DKIM/DMARC by hand.
+- **AI agent can now perform setup work, not just advise** — this is the
+  core "AI does the work" goal made real:
+  `add_sending_connection`/`add_domain`/`create_campaign`/`apply_dns_records`
+  and read-only `list_connections`/`list_domains`/`list_contact_lists`
+  tools (`src/AI/AIToolHandlers.php`) let a client say "connect my
+  SendGrid account" or "add mail.mydomain.com" in chat; the agent asks
+  for whatever details it needs conversationally, then calls the tool.
+  `send_campaign_now`/`disable_connection`/`delete_contact_list` remain
+  in `AIAgent::DESTRUCTIVE_TOOLS` — always gated on human approval
+  regardless of `ai_autonomy_level`. The dashboard chat widget
+  (`layout_foot.php`) now has real Approve/Reject buttons wired to
+  `public/dashboard/ai_approve.php`, which re-validates the pending
+  action belongs to the logged-in client before executing it — the
+  previous build logged pending approvals but had no UI path to actually
+  approve one.
+
 ### Explicitly stubbed / not yet built
-- **Send-time optimization** — `contacts.best_send_hour_local` is written
-  naively (last engagement hour, not a rolling histogram/mode) in
-  `TrackingEventRecorder`; not yet used to actually schedule sends.
-- **A/B testing auto-pilot** — no A/B split/winner-selection logic yet
-  (`campaigns.ab_test_enabled` / `ab_winner_variant_id` columns exist,
-  unused).
-- **Automated DNS record application** (Cloudflare API etc.) —
-  `DomainVerificationService` tells a client exactly what to publish; it
-  does not publish it for them.
-- **Click-link allowlisting** — `public/track/click.php` validates the
-  redirect target is http(s) but doesn't cross-check it against links
-  actually present in the original campaign (documented open-redirect
-  caveat in that file).
-- **PDF export** for analytics; CSV export exists implicitly via the API's
-  JSON (no dedicated export endpoint yet).
-- **Webhook support** for real-time event streaming (spec section 3.8) —
-  not implemented.
+- **Two-factor authentication**, ticket system, GDPR self-service export
+  tooling, plan/billing/quota enforcement UI, and most of the
+  super-admin suite beyond what's listed above (client CRUD/impersonate,
+  global health dashboard, bulk actions, revenue overview) — large,
+  separately-scoped pieces of the full spec not yet built.
 - `email_logs` / `campaigns` schema assumptions — several repos assume
-  columns on these two **pre-existing** (baseline-system) tables that
-  weren't part of this project's migrations; see the `ASSUMPTION NOTE` in
+  columns on these two tables; see the `ASSUMPTION NOTE` in
   `src/Core/CampaignRepository.php` and the note in `worker/worker.php`'s
-  `logEmailEvent()`. Verify against your actual tables before running
-  against anything but a fresh database.
+  `logEmailEvent()`. As of `004_platform_extensions.sql` both tables are
+  actually created by this project's own migrations on a fresh database
+  (see the note further down), so this mainly matters if you're
+  retrofitting onto a genuinely pre-existing install with different
+  column names.
 
 ## Setup (local dev)
 
@@ -109,17 +160,20 @@ To seed an AI provider, encrypt an API key with `EncryptionService` and
 insert it into `ai_providers` — see `src/AI/AIProviderFactory.php` for the
 expected row shape. To create your first client and super-admin login,
 insert rows into `clients` / `super_admins` with
-`password_hash(..., PASSWORD_DEFAULT)` — no signup UI exists yet (Phase 2:
-proper registration flow).
+`password_hash(..., PASSWORD_DEFAULT)`, or use `public/dashboard/signup.php`
+for a real self-serve account.
 
 Cron entries the spec calls for (add to the `cron` container or host
 crontab):
 ```
 * * * * * php /path/to/worker/worker.php 50 >> /var/log/mailai/worker.log 2>&1
 * * * * * php /path/to/worker/ai_cycle.php >> /var/log/mailai/ai_cycle.log 2>&1
+* * * * * php /path/to/worker/webhook_worker.php >> /var/log/mailai/webhook_worker.log 2>&1
 ```
-(`docker-compose.yml`'s `worker`/`cron` services already loop these every
-5s/60s respectively — the crontab lines above are for a non-Docker deploy.)
+(`docker-compose.yml`'s `worker`/`cron` services already loop `worker.php`/
+`ai_cycle.php` every 5s/60s respectively — add `webhook_worker.php` to the
+same loop if you're deploying with Docker Compose; the crontab lines above
+are for a non-Docker deploy.)
 
 ## Deploying to Render
 
@@ -137,17 +191,20 @@ processor + AI cycle), and Redis via Render's Blueprint feature ("New +" →
    it's a public CA cert, not a secret) so `Database::connection()` opts
    into an encrypted connection. Also set `APP_ENCRYPTION_KEY` (generate
    with the command in "Setup" below) and `APP_URL`.
-2. **Run the migrations once** against that database —
-   `database/001_platform_schema.sql`, then `002`, then `003`, in that
-   order. This Render plan has no shell access, so there's no `psql`/`mysql`
-   CLI to run them by hand from the dashboard. `public/migrate.php` exists
-   for exactly this: a token-gated one-time endpoint (guarded by a
-   `MIGRATE_TOKEN` env var you set only for the duration of the migration,
-   then delete) that runs all three files and, with `&seed=1&password=...`,
-   creates a first `clients` row and `super_admins` row so there's
-   something to log in with. **Delete `MIGRATE_TOKEN` from the Render env
-   right after running it** — without that var set, every request to
-   `migrate.php` 403s, which is the safe default state for it to sit in
+2. **Run the migrations once** against that database — `database/001`,
+   `002`, `003`, `004`, in that order. This Render plan has no shell
+   access, so there's no `psql`/`mysql` CLI to run them by hand from the
+   dashboard. `public/migrate.php` exists for exactly this: a token-gated
+   one-time endpoint (guarded by a `MIGRATE_TOKEN` env var you set only
+   for the duration of the migration, then delete) that runs every
+   `database/0*.sql` file it finds, in order, or a single file via
+   `&only=004` (useful once earlier files are already applied — none of
+   these migrations are safe to re-run, see the note further down). With
+   `&seed=1&password=...` it also creates a first `clients` row and
+   `super_admins` row so there's something to log in with. **Delete
+   `MIGRATE_TOKEN` from the Render env right after running it** — without
+   that var set, every request to `migrate.php` 403s, which is the safe
+   default state for it to sit in
    long-term.
 
 The build failure you'd hit without `render.yaml`/the root `Dockerfile`

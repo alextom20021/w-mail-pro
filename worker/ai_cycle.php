@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
+use MailAI\AI\ABTestingService;
 use MailAI\AI\AnomalyDetector;
 use MailAI\AI\WarmupScheduler;
 use MailAI\Core\ClientContext;
@@ -41,7 +42,7 @@ $recovered = (new OutboxRepository())->releaseStaleLocks();
 
 $clientIds = $db->query("SELECT id FROM clients WHERE status = 'active'")->fetchAll(PDO::FETCH_COLUMN);
 
-$summary = ['clients_processed' => 0, 'warmup_decisions' => 0, 'anomalies_found' => 0, 'severe_anomalies' => 0];
+$summary = ['clients_processed' => 0, 'warmup_decisions' => 0, 'anomalies_found' => 0, 'severe_anomalies' => 0, 'ab_winners_decided' => 0];
 
 foreach ($clientIds as $clientId) {
     try {
@@ -51,11 +52,20 @@ foreach ($clientIds as $clientId) {
 
         $warmupDecisions = (new WarmupScheduler($db))->runForCurrentClient($connections);
         $anomalies = (new AnomalyDetector($db))->scanForCurrentClient($connections);
+        $abDecisions = (new ABTestingService($db))->selectWinnersForCurrentClient((int) $clientId);
 
         $summary['clients_processed']++;
         $summary['warmup_decisions'] += count($warmupDecisions);
         $summary['anomalies_found'] += count($anomalies);
         $summary['severe_anomalies'] += count(array_filter($anomalies, fn($a) => $a['severity'] === 'severe'));
+        $summary['ab_winners_decided'] += count($abDecisions);
+
+        foreach ($abDecisions as $decision) {
+            fwrite(STDOUT, sprintf(
+                "[client %d] A/B test winner for campaign %d: variant %s\n",
+                $clientId, $decision['campaign_id'], $decision['winner_label']
+            ));
+        }
 
         foreach ($anomalies as $anomaly) {
             fwrite(STDOUT, sprintf(

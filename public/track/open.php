@@ -41,7 +41,7 @@ try {
         $country = $ip ? $geo->countryCode($ip) : null;
 
         $recorder = new TrackingEventRecorder(Database::connection());
-        $recorder->recordOpen($data['client_id'], $data['contact_id'], $data['campaign_id'], $ip, $country);
+        $recorder->recordOpen($data['client_id'], $data['contact_id'], $data['campaign_id'], $ip, $country, $data['outbox_id'] ?: null);
     }
 } catch (\Throwable $e) {
     // Swallow — tracking failures must never surface to the recipient or

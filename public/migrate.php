@@ -5,18 +5,26 @@ declare(strict_types=1);
 /**
  * public/migrate.php
  *
- * ONE-TIME deployment utility. Runs database/001, 002, 003 in order
- * against whatever DB_* the running environment is configured with, then
- * (optionally, via ?seed=1) creates a first client + super-admin login so
- * there's something to actually log in with on a fresh database.
+ * ONE-TIME (well — one-time PER FILE) deployment utility. Runs
+ * database/*.sql migrations against whatever DB_* the running
+ * environment is configured with, then (optionally, via ?seed=1)
+ * creates a first client + super-admin login.
+ *
+ * By default runs every 00N_*.sql file in database/, in order — correct
+ * for a genuinely fresh database. Pass &only=004 (matches the numeric
+ * prefix) to run a single migration file instead, which is what you want
+ * once earlier files have already been applied: none of these migrations
+ * are safe to re-run (plain ADD COLUMN/CREATE TABLE, not idempotent
+ * IF NOT EXISTS throughout — see the note in 001_platform_schema.sql for
+ * why ADD COLUMN IF NOT EXISTS isn't used), so re-running an already-
+ * applied file fails with a duplicate-column/table error rather than
+ * silently no-op'ing.
  *
  * Guarded by MIGRATE_TOKEN (an env var, not committed anywhere) so this
  * isn't a public unauthenticated "drop tables" endpoint sitting on the
  * live site. There is no default token — if MIGRATE_TOKEN isn't set in
- * the environment, every request 403s.
- *
- * DELETE THIS FILE (or unset MIGRATE_TOKEN) once the initial migration +
- * seed has been run. It is not meant to stay deployed long-term.
+ * the environment, every request 403s. Set MIGRATE_TOKEN only for the
+ * duration of a migration run, then delete it again.
  */
 
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -39,11 +47,18 @@ $results = [];
 try {
     $pdo = Database::connection();
 
-    $files = [
-        __DIR__ . '/../database/001_platform_schema.sql',
-        __DIR__ . '/../database/002_api_rate_limiting.sql',
-        __DIR__ . '/../database/003_auth_and_admin.sql',
-    ];
+    $allFiles = glob(__DIR__ . '/../database/0*.sql');
+    sort($allFiles);
+
+    $only = $_GET['only'] ?? '';
+    if ($only !== '') {
+        $files = array_values(array_filter($allFiles, static fn($f) => str_contains(basename($f), $only)));
+        if ($files === []) {
+            throw new RuntimeException("No migration file matches only=$only");
+        }
+    } else {
+        $files = $allFiles;
+    }
 
     foreach ($files as $file) {
         $sql = file_get_contents($file);

@@ -8,21 +8,22 @@ declare(strict_types=1);
  * Click redirector: /track/click.php?t=TOKEN&u=BASE64_DESTINATION_URL
  * Records the click, then 302-redirects to the original link.
  *
- * SECURITY NOTE (Phase 1 scope): the destination URL is taken from the
- * request rather than being cross-checked against a registered list of
- * links extracted from the campaign at send time. That means the token
- * proves "this is a real tracked send for this contact/campaign" but
- * NOT "this exact URL was in the original email" — a party who guesses
- * a valid token could redirect through this domain to an arbitrary URL
- * (a classic open-redirect risk, mitigated only by requiring a valid
- * signed token). Phase 2 should extract and store links per campaign at
- * queue time and validate `u` against that allowlist before redirecting.
- * Scheme is restricted to http/https here as a minimum guardrail.
+ * SECURITY: the destination URL is cross-checked against
+ * campaign_links — the set of URLs LinkRewriter actually found and
+ * registered for this campaign at queue time (see
+ * CampaignQueueingService/LinkRewriter). A valid signed token alone is
+ * no longer enough to redirect anywhere; the URL must also have been a
+ * real link in that campaign's original content. If the destination
+ * isn't registered (or the token doesn't resolve to a campaign at all —
+ * e.g. malformed/forged token), this falls back to APP_URL instead of
+ * failing open to an attacker-supplied redirect. Scheme is restricted to
+ * http/https as a second guardrail regardless.
  */
 
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use MailAI\Core\Database;
+use MailAI\Tracking\ClickAllowlist;
 use MailAI\Tracking\GeoIpService;
 use MailAI\Tracking\TrackingEventRecorder;
 use MailAI\Tracking\TrackingTokenService;
@@ -47,12 +48,23 @@ try {
     $data = $tokens->verify($token);
 
     if ($data !== null) {
+        $db = Database::connection();
+
+        // Allowlist check: the destination must be a link this campaign's
+        // content actually contained (registered by LinkRewriter/
+        // CampaignQueueingService at queue time), not just any URL an
+        // attacker can pass in `u` alongside a guessed-but-valid token.
+        $allowlist = new ClickAllowlist($db);
+        if (!$allowlist->isRegistered($data['client_id'], $data['campaign_id'], $destination)) {
+            $destination = $fallback;
+        }
+
         $ip = $_SERVER['REMOTE_ADDR'] ?? null;
         $geo = new GeoIpService(__DIR__ . '/../../storage/geoip/GeoLite2-Country.mmdb');
         $country = $ip ? $geo->countryCode($ip) : null;
 
-        $recorder = new TrackingEventRecorder(Database::connection());
-        $recorder->recordClick($data['client_id'], $data['contact_id'], $data['campaign_id'], $ip, $country);
+        $recorder = new TrackingEventRecorder($db);
+        $recorder->recordClick($data['client_id'], $data['contact_id'], $data['campaign_id'], $ip, $country, $data['outbox_id'] ?: null);
     }
 } catch (\Throwable $e) {
     error_log('[track/click] ' . $e->getMessage());
